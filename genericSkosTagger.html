@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Concept Extractor — Weighted UI</title>
+  <style>
+    :root {
+      --chip-bg: #f6f7f9;
+      --chip-border: #d7dbe2;
+      --chip-text: #222;
+      --accent: #0a7cff;
+      --muted: #666;
+      --warn: #b54708;
+      --ok: #0a7d3b;
+      --badge-bg: #eef3ff;
+      --badge-border: #c7d8ff;
+    }
+    body { font-family: system-ui, Arial, sans-serif; margin: 20px; color: #111; }
+    textarea {
+      width: 100%; height: 180px; padding: 10px; box-sizing: border-box;
+      font-size: 16px; line-height: 1.5; border: 1px solid #ccc; border-radius: 8px; resize: vertical;
+    }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0 16px; }
+    .row input[type="text"] { padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 14px; min-width: 280px; }
+    .row select, .row button, .row label { font-size: 14px; }
+    .row button { padding: 9px 14px; border: 1px solid var(--accent); color: white; background: var(--accent); border-radius: 8px; cursor: pointer; }
+    .row button.secondary { background: transparent; color: var(--accent); }
+    .status { margin-top: 12px; font-size: 15px; color: #333; }
+    .pulsing { animation: pulse 1s infinite; }
+    @keyframes pulse { 0%{opacity:1} 50%{opacity:.6} 100%{opacity:1} }
+
+    #highlightableText {
+      width: 100%; min-height: 100px; padding: 12px; box-sizing: border-box;
+      border: 1px solid #ccc; border-radius: 8px; margin-top: 14px; background: #fff;
+      white-space: pre-wrap; word-wrap: break-word; font-size: 16px; line-height: 1.55;
+    }
+
+    .concept-list { margin-top: 18px; }
+.chips {
+  /* was: grid; now let chips size to content and wrap */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;      /* keep tops aligned when wrapping */
+  justify-content: flex-start;  /* ragged left */
+}
+
+.chip {
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  border-radius: 14px;
+  padding: 8px 12px;
+  display: flex;
+  flex-wrap: wrap;              /* allow inner items to wrap */
+  align-items: flex-start;
+  gap: 8px 10px;                /* row/column gap */
+  max-width: min(100%, 720px);  /* long labels can grow, but cap for readability */
+  cursor: default;
+}
+
+.chip .title {
+  font-weight: 600;
+  color: var(--chip-text);
+  /* was: overflow hidden + ellipsis + nowrap */
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;         /* allow wrapping */
+  line-height: 1.25;
+}
+
+/* make the badge wrap nicely and not crush the title */
+.chip .badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--badge-border);
+  background: var(--badge-bg);
+  color: #18407a;
+  white-space: nowrap;         /* keep score as a unit */
+}
+    .chip .warn { color: var(--warn); font-size: 12px; }
+    .chip input { width: 16px; height: 16px; }
+
+    .legend { margin-top: 8px; color: var(--muted); font-size: 13px; display: flex; gap: 16px; flex-wrap: wrap; }
+    .legend .dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; border: 1px solid #555; }
+    .legend .pref { border-style: solid; background: #111; }
+    .legend .syn { border-style: solid; background: #666; }
+    .legend .fuz { border-style: dashed; background: #aaa; }
+    .legend .nlp { border-style: dotted; background: #ddd; }
+
+    /* Highlight styles for hover */
+    .hl-pref { font-weight: 700; }
+    .hl-syn { text-decoration: underline; text-decoration-thickness: 2px; }
+    .hl-fuzzy { border-bottom: 2px dashed #d28b00; }
+    .hl-nlp { border-bottom: 2px dotted #888; }
+
+    details { margin-top: 12px; }
+    pre { background: #fafafa; border: 1px solid #eee; padding: 12px; border-radius: 8px; overflow: auto; }
+    .muted { color: var(--muted); font-size: 13px; }
+
+	/* Shared highlight background for all match types */
+	.hl-base {
+	  background: #fff3a3;   /* soft yellow */
+	  border-radius: 3px;
+	  padding: 0 1px;
+	}
+
+  </style>
+</head>
+<body>
+
+  <h1>Concept Extractor (Weighted UI)</h1>
+
+  <div class="row">
+    <label for="endpoint" title="HTTP(S) URL for your Flask endpoint">Endpoint:</label>
+    <input id="endpoint" type="text" value="http://localhost:5000/extract_concepts" />
+    <label><input id="includeNLP" type="checkbox" checked /> include NLP</label>
+    <label><input id="hideHomographs" type="checkbox" /> hide homographs</label>
+    <label>Sort:
+      <select id="sortMode">
+        <option value="score">by score (desc)</option>
+        <option value="alpha">A → Z</option>
+      </select>
+    </label>
+    <button id="submitButton">Submit</button>
+    <button id="clearButton" class="secondary">Clear</button>
+  </div>
+
+  <label for="textInput">Enter Title and Abstract:</label><br />
+  <textarea id="textInput" placeholder="Type your text here..."></textarea>
+
+  <div class="legend">
+    <span><span class="dot pref"></span><strong>prefLabel</strong> highlight is bold</span>
+    <span><span class="dot syn"></span><strong>synonym</strong> highlight is underlined</span>
+    <span><span class="dot fuz"></span><strong>fuzzy</strong> highlight is dashed</span>
+    <span><span class="dot nlp"></span><strong>NLP</strong> highlight is dotted</span>
+  </div>
+
+  <div id="highlightableText"></div>
+  <div id="statusContainer"></div>
+
+  <script>
+    // Persist endpoint in localStorage
+    const endpointInput = document.getElementById('endpoint');
+    const LS_KEY = 'conceptExtractorEndpoint';
+    endpointInput.value = localStorage.getItem(LS_KEY) || endpointInput.value;
+    endpointInput.addEventListener('change', () => localStorage.setItem(LS_KEY, endpointInput.value));
+
+    const escapeHTML = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+    function displayInputText(text) {
+      const el = document.getElementById('highlightableText');
+      el.innerHTML = escapeHTML(text);
+    }
+
+    document.getElementById('clearButton').addEventListener('click', () => {
+      document.getElementById('textInput').value = '';
+      document.getElementById('statusContainer').innerHTML = '';
+      displayInputText('');
+    });
+
+    document.getElementById('submitButton').addEventListener('click', function () {
+      const textInput = document.getElementById('textInput').value
+        .replace(/[\r\n]+/g, ' ')
+        .replace(/<[^>]+?>/g, ' ');
+
+      if (!textInput.trim()) {
+        alert('Please enter some text.');
+        return;
+      }
+      displayInputText(textInput);
+      document.getElementById('statusContainer').innerHTML = '';
+
+      const data = { text: textInput };
+      callExtractConcepts(data, textInput);
+    });
+
+    function callExtractConcepts(data, originalText) {
+      const statusContainer = document.getElementById('statusContainer');
+      const statusMessage = document.createElement('div');
+      statusMessage.classList.add('status', 'pulsing');
+      statusMessage.textContent = 'Calling /extract_concepts endpoint...';
+      statusContainer.appendChild(statusMessage);
+
+      const url = endpointInput.value.trim();
+
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      })
+      .then((response) => {
+        if (!response.ok) throw new Error('Network response was not ok: ' + response.statusText);
+        return response.json();
+      })
+      .then((conceptData) => {
+        statusMessage.classList.remove('pulsing');
+        statusMessage.textContent = 'Finished calling /extract_concepts endpoint.';
+        renderConcepts(conceptData, statusContainer, originalText);
+        const details = document.createElement('details');
+        const summary = document.createElement('summary');
+        summary.textContent = 'See JSON response from /extract_concepts';
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(conceptData, null, 2);
+        details.appendChild(summary); details.appendChild(pre);
+        statusContainer.appendChild(details);
+      })
+      .catch((error) => {
+        statusMessage.classList.remove('pulsing');
+        statusMessage.textContent = 'Error calling /extract_concepts endpoint.';
+        console.error('There was an error:', error);
+      });
+    }
+
+    // Scoring weights + helpers
+    const TYPE_WEIGHT = { prefLabel: 4, synonym: 3, fuzzy: 2, NLP: 1 };
+
+    function parseReinforced(notes) {
+      let max = 1;
+      if (!Array.isArray(notes)) return max;
+      for (const n of notes) {
+        if (typeof n === 'string' && n.startsWith('reinforced:')) {
+          const v = parseInt(n.split(':')[1], 10);
+          if (!isNaN(v) && v > max) max = v;
+        }
+      }
+      return max;
+    }
+
+    function hasHomograph(notes) {
+      if (!Array.isArray(notes)) return false;
+      return notes.some(n => typeof n === 'string' && n.trim().toLowerCase() === 'homograph');
+    }
+
+    function strongestType(typesSet) {
+      // Choose best for highlight class
+      if (typesSet.has('prefLabel')) return 'prefLabel';
+      if (typesSet.has('synonym')) return 'synonym';
+      if (typesSet.has('fuzzy')) return 'fuzzy';
+      if (typesSet.has('NLP')) return 'NLP';
+      return 'NLP';
+    }
+
+    function renderConcepts(conceptData, statusContainer, originalText) {
+      // Group by prefLabel
+      const groups = {};
+      for (const row of conceptData) {
+        const key = row.prefLabel || '(no label)';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(row);
+      }
+
+      // Build label info with scores
+      const includeNLP = document.getElementById('includeNLP').checked;
+      const hideHomographs = document.getElementById('hideHomographs').checked;
+
+      const infos = [];
+      for (const [label, arr] of Object.entries(groups)) {
+        // Skip groups if only NLP is present and includeNLP is false
+        const types = new Set(arr.map(a => a.Match_type));
+        const allNLP = Array.from(types).every(t => (t || '').toUpperCase() === 'NLP');
+        if (allNLP && !includeNLP) continue;
+
+        // compute base score from types
+        let typeScore = 0;
+        let maxReinforced = 1;
+        let homograph = false;
+
+        for (const a of arr) {
+          const t = (a.Match_type || '').trim();
+          typeScore += TYPE_WEIGHT[t] || 0;
+          const r = parseReinforced(a.Match_notes);
+          if (r > maxReinforced) maxReinforced = r;
+          if (hasHomograph(a.Match_notes)) homograph = true;
+        }
+
+        const bonus = (maxReinforced > 1) ? (maxReinforced - 1) : 0; // simple bonus
+        const score = typeScore + bonus;
+
+        if (hideHomographs && homograph) continue;
+
+        infos.push({
+          label,
+          score,
+          maxReinforced,
+          homograph,
+          types,
+          rows: arr,
+        });
+      }
+
+      // Sort
+      const mode = document.getElementById('sortMode').value;
+      if (mode === 'score') {
+        infos.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+      } else {
+        infos.sort((a, b) => a.label.localeCompare(b.label));
+      }
+
+      // Render chips
+      const container = document.createElement('div');
+      container.className = 'concept-list';
+      const heading = document.createElement('h2');
+      heading.textContent = 'Matched Concepts';
+      container.appendChild(heading);
+
+      // little helper line
+      const hint = document.createElement('div');
+      hint.className = 'muted';
+      hint.textContent = 'Hover a chip to highlight matches in the text. Uncheck “include NLP” or check “hide homographs” to filter.';
+      container.appendChild(hint);
+
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+
+      for (const info of infos) {
+        const chip = document.createElement('div');
+        chip.className = 'chip';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+
+        // default checked (unless homograph with only NLP single-term, reuse your older heuristic)
+        const isSingleWord = !info.label.includes(' ');
+        const typesUpper = Array.from(info.types).map(t => (t || '').toUpperCase());
+        const allNLP = typesUpper.length > 0 && typesUpper.every(t => t === 'NLP');
+        const shouldUntick = info.homograph || (isSingleWord && allNLP);
+        checkbox.checked = !shouldUntick;
+
+        const title = document.createElement('span');
+        title.className = 'title';
+        title.textContent = info.label;
+
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = `score ${info.score}${info.maxReinforced>1?` • x${info.maxReinforced}`:''}`;
+
+        const warn = document.createElement('span');
+        warn.className = 'warn';
+        warn.textContent = info.homograph ? 'homograph' : '';
+
+        chip.appendChild(checkbox);
+        chip.appendChild(title);
+        chip.appendChild(badge);
+        if (info.homograph) chip.appendChild(warn);
+
+        // Highlight on hover based on strongest type
+        const domType = strongestType(new Set(Array.from(info.types)));
+        chip.addEventListener('mouseenter', () => highlightMatches(info.rows, originalText, domType));
+        chip.addEventListener('mouseleave', () => removeHighlights(originalText));
+
+        chips.appendChild(chip);
+      }
+
+      container.appendChild(chips);
+      statusContainer.appendChild(container);
+    }
+
+    function highlightMatches(concepts, originalText, dominantType) {
+      const highlightableDiv = document.getElementById('highlightableText');
+      removeHighlights(originalText);
+      if (!concepts || !concepts.length) {
+        highlightableDiv.innerHTML = escapeHTML(originalText);
+        return;
+      }
+
+      const matchLabels = new Set();
+      for (const concept of concepts) {
+        if (concept.Match_label) matchLabels.add(concept.Match_label);
+      }
+      const sortedLabels = Array.from(matchLabels).sort((a, b) => b.length - a.length);
+      if (!sortedLabels.length) {
+        highlightableDiv.innerHTML = escapeHTML(originalText);
+        return;
+      }
+
+      const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = sortedLabels.map(escapeRegex).join('|');
+      // We apply a CSS class depending on the dominant type across the group
+      const cls = (dominantType === 'prefLabel') ? 'hl-pref'
+               : (dominantType === 'synonym')  ? 'hl-syn'
+               : (dominantType === 'fuzzy')    ? 'hl-fuzzy'
+               :                                  'hl-nlp';
+
+      const regex = new RegExp(`\\b(${pattern})\\b`, 'gi');
+      const replaced = originalText.replace(regex, `<span class="hl-base ${cls}">$1</span>`);
+      highlightableDiv.innerHTML = replaced;
+    }
+
+    function removeHighlights(originalText) {
+      const highlightableDiv = document.getElementById('highlightableText');
+      highlightableDiv.innerHTML = escapeHTML(originalText);
+    }
+  </script>
+</body>
+</html>
